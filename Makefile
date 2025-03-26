@@ -55,3 +55,6 @@ help: Makefile
 	@echo ''
 	@echo 'Targets:'
 	@sed -n 's/^#?//p' $< | column -t -s ':' |  sort | sed -e 's/^/ /'
+
+plugin:
+	go build -o plugin-for-testing cmd/plugin/main.go
