@@ -270,7 +270,7 @@ func (p *pluginBlast) Close() error {
 }
 
 func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
-	p.log.Info("ending currently pending block")
+	p.log.Debug("ending currently pending block")
 
 	p.s.l1BuildingHeader.GasUsed = p.s.l1BuildingHeader.GasLimit - uint64(*p.s.L1GasPool)
 	p.s.l1BuildingHeader.Root = p.s.l1BuildingState.IntermediateRoot(p.l1Cfg.Config.IsEIP158(p.s.l1BuildingHeader.Number))
@@ -453,7 +453,7 @@ func (p *pluginBlast) SetFeeRecipient(addr string) error {
 }
 
 func (p *pluginBlast) StartBlock(timeDelta uint64) error {
-	p.log.Info("plugin started new block")
+	p.log.Debug("plugin started new block")
 	parent := p.l1Chain.CurrentHeader()
 	parentHash := parent.Hash()
 	statedb, err := state.New(parent.Root, state.NewDatabase(triedb.NewDatabase(p.l1Database, nil), nil))
@@ -511,7 +511,7 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 		L1GasPool: new(core.GasPool).AddGas(header.GasLimit),
 	}
 
-	p.log.Info("work state ready")
+	p.log.Debug("work state ready")
 
 	return nil
 }
@@ -524,9 +524,11 @@ var handshakeConfig = plugin.HandshakeConfig{
 
 func main() {
 	logger := hclog.New(&hclog.LoggerOptions{
-		Level:      hclog.Trace,
-		Output:     os.Stderr,
-		JSONFormat: true,
+		Level:           hclog.Info,
+		Output:          os.Stderr,
+		JSONFormat:      false,
+		Color:           hclog.AutoColor,
+		IncludeLocation: true,
 	})
 
 	chain := &pluginBlast{
