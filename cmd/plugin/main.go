@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
@@ -270,7 +269,8 @@ func (p *pluginBlast) Close() error {
 	return nil
 }
 
-func (p *pluginBlast) EndBlock() ([]byte, error) {
+func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
+	p.log.Info("ending currently pending block")
 
 	p.s.l1BuildingHeader.GasUsed = p.s.l1BuildingHeader.GasLimit - uint64(*p.s.L1GasPool)
 	p.s.l1BuildingHeader.Root = p.s.l1BuildingState.IntermediateRoot(p.l1Cfg.Config.IsEIP158(p.s.l1BuildingHeader.Number))
@@ -292,10 +292,13 @@ func (p *pluginBlast) EndBlock() ([]byte, error) {
 		p.s.l1BuildingHeader.Number.Uint64(), p.l1Cfg.Config.IsEIP158(p.s.l1BuildingHeader.Number), isCancun,
 	)
 	if err != nil {
-		return nil, plugin.NewBasicError(err)
+		p.log.Error("problem-1", "err", err)
+		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
 	}
+
 	if err := p.s.l1BuildingState.Database().TrieDB().Commit(root, false); err != nil {
-		return nil, plugin.NewBasicError(err)
+		p.log.Error("problem-2", "err", err)
+		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
 	}
 
 	// now that the blob txs are in a canonical block, flush them to the blob store
@@ -309,15 +312,24 @@ func (p *pluginBlast) EndBlock() ([]byte, error) {
 
 	_, err = p.l1Chain.InsertChain(types.Blocks{block})
 	if err != nil {
-		return nil, plugin.NewBasicError(err)
+		p.log.Error("problem-3", "err", err)
+		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
 	}
+
 	p.s = nil
 
-	return json.Marshal(struct {
+	serialized, err := json.Marshal(struct {
 		Hdr      *types.Header
 		Txs      types.Transactions
 		Receipts types.Receipts
 	}{Hdr: block.Header(), Txs: block.Transactions()})
+
+	if err != nil {
+		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
+	}
+
+	return blockchain.NewBlockOrError{SerializedBlock: serialized}
+
 }
 
 // TODO error if its not started yet?
@@ -441,6 +453,7 @@ func (p *pluginBlast) SetFeeRecipient(addr string) error {
 }
 
 func (p *pluginBlast) StartBlock(timeDelta uint64) error {
+	p.log.Info("plugin started new block")
 	parent := p.l1Chain.CurrentHeader()
 	parentHash := parent.Hash()
 	statedb, err := state.New(parent.Root, state.NewDatabase(triedb.NewDatabase(p.l1Database, nil), nil))
@@ -457,13 +470,11 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 		GasLimit:   parent.GasLimit,
 		Time:       parent.Time + timeDelta,
 		Extra:      []byte("L1 was here"),
-		// its fine - will be overwritten
-		BaseFee:   big.NewInt(params.InitialBaseFee),
-		MixDigest: common.Hash{}, // TODO: maybe randomize this (prev-randao value)
+		MixDigest:  common.Hash{}, // TODO: maybe randomize this (prev-randao value)
 	}
 
 	if p.l1Cfg.Config.IsLondon(header.Number) {
-		header.BaseFee = eip1559.CalcBaseFee(p.l1Cfg.Config, header)
+		header.BaseFee = eip1559.CalcBaseFee(p.l1Cfg.Config, parent)
 		// At the transition, double the gas limit so the gas target is equal to the old gas limit.
 		if !p.l1Cfg.Config.IsLondon(parent.Number) {
 			header.GasLimit = parent.GasLimit * p.l1Cfg.Config.ElasticityMultiplier()
@@ -490,8 +501,6 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv)
 	}
 
-	p.log.Info("started new block")
-
 	p.s = &workState{
 		l1BuildingHeader: header,
 		l1BuildingState:  statedb,
@@ -501,6 +510,9 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 		//		l1BuildingBlobSidecars: make([]*types.BlobTxSidecar, 0),
 		L1GasPool: new(core.GasPool).AddGas(header.GasLimit),
 	}
+
+	p.log.Info("work state ready")
+
 	return nil
 }
 
