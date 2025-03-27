@@ -2,6 +2,7 @@ package main
 
 import (
 	"blast/blockchain"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
@@ -18,6 +20,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/filters"
@@ -33,12 +36,127 @@ import (
 	"github.com/hashicorp/go-plugin"
 )
 
+type L1BlockRef struct {
+	Hash       common.Hash `json:"hash"`
+	Number     uint64      `json:"number"`
+	ParentHash common.Hash `json:"parentHash"`
+	Time       uint64      `json:"timestamp"`
+}
+
+// IndexedBlobHash represents a blob hash that commits to a single blob confirmed in a block.  The
+// index helps us avoid unnecessary blob to blob hash conversions to find the right content in a
+// sidecar.
+type IndexedBlobHash struct {
+	Index uint64      // absolute index in the block, a.k.a. position in sidecar blobs array
+	Hash  common.Hash // hash of the blob, used for consistency checks
+}
+
+type BlobsStore struct {
+	// block timestamp -> blob versioned hash -> blob
+	blobs map[uint64]map[IndexedBlobHash]*kzg4844.Blob
+}
+
+func NewBlobStore() *BlobsStore {
+	return &BlobsStore{blobs: make(map[uint64]map[IndexedBlobHash]*kzg4844.Blob)}
+}
+
+func (store *BlobsStore) StoreBlob(blockTime uint64, indexedHash IndexedBlobHash, blob *kzg4844.Blob) {
+	m, ok := store.blobs[blockTime]
+	if !ok {
+		m = make(map[IndexedBlobHash]*kzg4844.Blob)
+		store.blobs[blockTime] = m
+	}
+	m[indexedHash] = blob
+}
+
+func (store *BlobsStore) GetBlobs(
+	ctx context.Context, ref L1BlockRef, hashes []IndexedBlobHash,
+) ([]*kzg4844.Blob, error) {
+	out := make([]*kzg4844.Blob, 0, len(hashes))
+	m, ok := store.blobs[ref.Time]
+	if !ok {
+		return nil, fmt.Errorf("no blobs known with given time: %w", ethereum.NotFound)
+	}
+	for _, h := range hashes {
+		b, ok := m[h]
+		if !ok {
+			return nil, fmt.Errorf("blob %d %s is not in store: %w", h.Index, h.Hash, ethereum.NotFound)
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+// func (store *BlobsStore) GetBlobSidecars(ctx context.Context, ref L1BlockRef, hashes []IndexedBlobHash) ([]*eth.BlobSidecar, error) {
+// 	out := make([]*eth.BlobSidecar, 0, len(hashes))
+// 	m, ok := store.blobs[ref.Time]
+// 	if !ok {
+// 		return nil, fmt.Errorf("no blobs known with given time: %w", ethereum.NotFound)
+// 	}
+// 	for _, h := range hashes {
+// 		b, ok := m[h]
+// 		if !ok {
+// 			return nil, fmt.Errorf("blob %d %s is not in store: %w", h.Index, h.Hash, ethereum.NotFound)
+// 		}
+// 		if b == nil {
+// 			return nil, fmt.Errorf("blob %d %s is nil, cannot copy: %w", h.Index, h.Hash, ethereum.NotFound)
+// 		}
+
+// 		commitment, err := kzg4844.BlobToCommitment(b.KZGBlob())
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to convert blob to commitment: %w", err)
+// 		}
+// 		proof, err := kzg4844.ComputeBlobProof(b.KZGBlob(), commitment)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to compute blob proof: %w", err)
+// 		}
+// 		out = append(out, &eth.BlobSidecar{
+// 			Index:         eth.Uint64String(h.Index),
+// 			Blob:          *b,
+// 			KZGCommitment: eth.Bytes48(commitment),
+// 			KZGProof:      eth.Bytes48(proof),
+// 		})
+// 	}
+// 	return out, nil
+// }
+
+// func (store *BlobsStore) GetAllSidecars(ctx context.Context, l1Timestamp uint64) ([]*eth.BlobSidecar, error) {
+// 	m, ok := store.blobs[l1Timestamp]
+// 	if !ok {
+// 		return nil, fmt.Errorf("no blobs known with given time: %w", ethereum.NotFound)
+// 	}
+// 	out := make([]*eth.BlobSidecar, len(m))
+// 	for h, b := range m {
+// 		if b == nil {
+// 			return nil, fmt.Errorf("blob %d %s is nil, cannot copy: %w", h.Index, h.Hash, ethereum.NotFound)
+// 		}
+
+// 		commitment, err := kzg4844.BlobToCommitment(b.KZGBlob())
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to convert blob to commitment: %w", err)
+// 		}
+// 		proof, err := kzg4844.ComputeBlobProof(b.KZGBlob(), commitment)
+// 		if err != nil {
+// 			return nil, fmt.Errorf("failed to compute blob proof: %w", err)
+// 		}
+// 		out[h.Index] = &eth.BlobSidecar{
+// 			Index:         eth.Uint64String(h.Index),
+// 			Blob:          *b,
+// 			KZGCommitment: eth.Bytes48(commitment),
+// 			KZGProof:      eth.Bytes48(proof),
+// 		}
+// 	}
+// 	return out, nil
+// }
+
 type pluginBlast struct {
 	log hclog.Logger
 
 	node         *node.Node
 	Eth          *eth.Ethereum
 	prefCoinbase common.Address
+
+	blobStore *BlobsStore
 
 	// L1 evm / chain
 	l1Chain    *core.BlockChain
@@ -180,15 +298,14 @@ func (p *pluginBlast) EndBlock() ([]byte, error) {
 		return nil, plugin.NewBasicError(err)
 	}
 
-	// NOTE come back to - cause will probably need for batcher
 	// now that the blob txs are in a canonical block, flush them to the blob store
-	// for _, sidecar := range p.s.l1BuildingBlobSidecars {
-	// 	for i, h := range sidecar.BlobHashes() {
-	// 		blob := (*eth.Blob)(&sidecar.Blobs[i])
-	// 		indexedHash := eth.IndexedBlobHash{Index: uint64(i), Hash: h}
-	// 		p.s.blobStore.StoreBlob(block.Time(), indexedHash, blob)
-	// 	}
-	// }
+	for _, sidecar := range p.s.l1BuildingBlobSidecars {
+		for i, h := range sidecar.BlobHashes() {
+			blob := sidecar.Blobs[i]
+			indexedHash := IndexedBlobHash{Index: uint64(i), Hash: h}
+			p.blobStore.StoreBlob(block.Time(), indexedHash, &blob)
+		}
+	}
 
 	_, err = p.l1Chain.InsertChain(types.Blocks{block})
 	if err != nil {
@@ -229,6 +346,8 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) er
 		if err := json.Unmarshal(startingArgs.SerializedGenesis, &gen); err != nil {
 			return plugin.NewBasicError(fmt.Errorf("problem deserializing genesis %w", err))
 		}
+		p.log.Info("custom genesis provided blob schedule", "schedule", gen.Config.BlobScheduleConfig)
+
 	} else {
 		gen = *core.DeveloperGenesisBlock(30_000_000, nil)
 		gen.Config.CancunTime = startingArgs.WhenActivateCancun
