@@ -463,7 +463,6 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	}
 
 	if p.l1Cfg.Config.IsLondon(header.Number) {
-		p.log.Info("what is fields", "a", p.l1Cfg, "b", header.Number)
 		header.BaseFee = eip1559.CalcBaseFee(p.l1Cfg.Config, header)
 		// At the transition, double the gas limit so the gas target is equal to the old gas limit.
 		if !p.l1Cfg.Config.IsLondon(parent.Number) {
