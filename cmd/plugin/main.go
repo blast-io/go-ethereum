@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -22,18 +23,18 @@ import (
 	"github.com/ethereum/go-ethereum/eth/filters"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-plugin"
 )
 
 type pluginBlast struct {
-	log log.Logger
+	log hclog.Logger
 
 	node         *node.Node
 	Eth          *eth.Ethereum
@@ -216,6 +217,11 @@ var (
 func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) error {
 	var gen core.Genesis
 
+	p.log.Info(
+		"making new chain in geth as plugin",
+		"using-custom-genesis", len(startingArgs.SerializedGenesis) > 0,
+	)
+
 	if startingArgs.AssumeMainnet {
 		// Then assume eth mainnet
 		gen = *core.DefaultGenesisBlock()
@@ -359,9 +365,14 @@ var handshakeConfig = plugin.HandshakeConfig{
 }
 
 func main() {
-	//	log.PrintOrigins(true)
+	logger := hclog.New(&hclog.LoggerOptions{
+		Level:      hclog.Trace,
+		Output:     os.Stderr,
+		JSONFormat: true,
+	})
+
 	chain := &pluginBlast{
-		log: log.New("env", "blast-geth"),
+		log: logger,
 	}
 
 	pluginMap := map[string]plugin.Plugin{
