@@ -331,8 +331,8 @@ var (
 	ErrNotCancunCantDoBlob = errors.New("not cancun yet so cant do blob")
 )
 
-func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) error {
-	var gen core.Genesis
+func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) ([]byte, error) {
+	var gen *core.Genesis
 
 	p.log.Info(
 		"making new chain in geth as plugin",
@@ -341,32 +341,45 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) er
 
 	if startingArgs.AssumeMainnet {
 		// Then assume eth mainnet
-		gen = *core.DefaultGenesisBlock()
+		gen = core.DefaultGenesisBlock()
 	} else if len(startingArgs.SerializedGenesis) > 0 {
 		if err := json.Unmarshal(startingArgs.SerializedGenesis, &gen); err != nil {
-			return plugin.NewBasicError(fmt.Errorf("problem deserializing genesis %w", err))
+			return nil, plugin.NewBasicError(fmt.Errorf("problem deserializing genesis %w", err))
 		}
-		p.log.Info("custom genesis provided blob schedule", "schedule", gen.Config.BlobScheduleConfig)
+
+		// l1Blk := gen.ToBlock()
+		// how it got it badck
+		// pr, _ := json.MarshalIndent([]any{l1Blk.Header(), l1Blk, gen}, " ", " ")
+		//		fmt.Fprintln(os.Stderr, "in plugin", string(pr))
+		// os.WriteFile("TEMP_GEN_TEST.json", pr, 0644)
+		blockZeroHash := gen.ToBlock().Hash()
+
+		p.log.Info(
+			"custom genesis provided blob schedule",
+			"assuming-block-zero-hash", blockZeroHash,
+			"schedule", gen.Config.BlobScheduleConfig,
+			//			"genesis", gen,
+		)
 
 	} else {
-		gen = *core.DeveloperGenesisBlock(30_000_000, nil)
+		gen = core.DeveloperGenesisBlock(30_000_000, nil)
 		gen.Config.CancunTime = startingArgs.WhenActivateCancun
 		gen.Config.PragueTime = startingArgs.WhenActivatePrague
-	}
+		for _addr, amt := range startingArgs.ExtraAllocs {
+			addr := common.HexToAddress(_addr)
+			if addr == (common.Address{}) {
+				return nil, plugin.NewBasicError(ErrEmptyAddr)
+			}
+			gen.Alloc[addr] = types.Account{
+				Balance: amt,
+			}
+		}
 
-	for _addr, amt := range startingArgs.ExtraAllocs {
-		addr := common.HexToAddress(_addr)
-		if addr == (common.Address{}) {
-			return plugin.NewBasicError(ErrEmptyAddr)
-		}
-		gen.Alloc[addr] = types.Account{
-			Balance: amt,
-		}
 	}
 
 	ethCfg := &ethconfig.Config{
 		NetworkId:   gen.Config.ChainID.Uint64(),
-		Genesis:     &gen,
+		Genesis:     gen,
 		StateScheme: rawdb.HashScheme,
 		NoPruning:   true,
 	}
@@ -381,14 +394,17 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) er
 		DataDir:     "", // in-memory
 		P2P:         p2p.Config{NoDiscovery: true, NoDial: true},
 	}
+
 	n, err := node.New(nodeCfg)
 	if err != nil {
-		return plugin.NewBasicError(err)
+		return nil, plugin.NewBasicError(err)
 	}
+
 	backend, err := eth.New(n, ethCfg)
 	if err != nil {
-		return plugin.NewBasicError(err)
+		return nil, plugin.NewBasicError(err)
 	}
+
 	n.RegisterAPIs(tracers.APIs(backend.APIBackend))
 	filterSystem := filters.NewFilterSystem(backend.APIBackend, filters.Config{
 		LogCacheSize: ethCfg.FilterLogCacheSize,
@@ -403,13 +419,16 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) er
 	p.Eth = backend
 	p.l1Chain = backend.BlockChain()
 	p.l1Database = backend.ChainDb()
-	p.l1Cfg = &gen
+	p.l1Cfg = gen
 	p.l1Signer = types.LatestSigner(gen.Config)
 	err = n.Start()
 	if err != nil {
-		return plugin.NewBasicError(err)
+		return nil, plugin.NewBasicError(err)
 	}
-	return nil
+
+	return json.Marshal(struct {
+		Hdr *types.Header
+	}{Hdr: gen.ToBlock().Header()})
 }
 
 func (p *pluginBlast) SetFeeRecipient(addr string) error {
