@@ -412,6 +412,15 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) er
 	return nil
 }
 
+func (p *pluginBlast) SetFeeRecipient(addr string) error {
+	coinbase := common.HexToAddress(addr)
+	if coinbase == (common.Address{}) {
+		return plugin.NewBasicError(fmt.Errorf("fee recipient set to empty addr"))
+	}
+	p.prefCoinbase = coinbase
+	return nil
+}
+
 func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	parent := p.l1Chain.CurrentHeader()
 	parentHash := parent.Hash()
