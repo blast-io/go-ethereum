@@ -280,6 +280,10 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		withdrawals = make([]*types.Withdrawal, 0)
 	}
 
+	if p.l1Chain.Config().IsPrague(p.s.l1BuildingHeader.Number, p.s.l1BuildingHeader.Time) {
+		p.s.l1BuildingHeader.RequestsHash = &types.EmptyRequestsHash
+	}
+
 	block := types.NewBlock(
 		p.s.l1BuildingHeader, &types.Body{
 			Transactions: p.s.L1Transactions,
@@ -486,19 +490,23 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	}
 
 	if p.l1Cfg.Config.IsCancun(header.Number, header.Time) {
+
+		var excessBlobGas uint64
+		if p.l1Cfg.Config.IsCancun(parent.Number, parent.Time) {
+			excessBlobGas = eip4844.CalcExcessBlobGas(p.l1Cfg.Config, parent, header.Time)
+		}
+
 		header.BlobGasUsed = new(uint64)
-		excessBlobGas := eip4844.CalcExcessBlobGas(p.l1Cfg.Config, parent, header.Time)
 		header.ExcessBlobGas = &excessBlobGas
 		root := crypto.Keccak256Hash([]byte("fake-beacon-block-root"), header.Number.Bytes())
 		header.ParentBeaconRoot = &root
 
-		// Copied from op-program/client/l2/engineapi/block_processor.go
-		// TODO(client-pod#826)
-		// Unfortunately this is not part of any Geth environment setup,
-		// we just have to apply it, like how the Geth block-builder worker does.
 		context := core.NewEVMBlockContext(header, p.l1Chain, nil)
 		vmenv := vm.NewEVM(context, statedb, p.l1Chain.Config(), vm.Config{})
-		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv)
+
+		if header.ParentBeaconRoot != nil {
+			core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv)
+		}
 	}
 
 	p.s = &workState{
