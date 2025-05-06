@@ -274,7 +274,6 @@ func (p *pluginBlast) Close() error {
 }
 
 func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
-	p.log.Debug("ending currently pending block")
 
 	p.s.l1BuildingHeader.GasUsed = p.s.l1BuildingHeader.GasLimit - uint64(*p.s.L1GasPool)
 	p.s.l1BuildingHeader.Root = p.s.l1BuildingState.IntermediateRoot(p.l1Cfg.Config.IsEIP158(p.s.l1BuildingHeader.Number))
@@ -300,12 +299,10 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		p.s.l1BuildingHeader.Number.Uint64(), p.l1Cfg.Config.IsEIP158(p.s.l1BuildingHeader.Number), isCancun,
 	)
 	if err != nil {
-		p.log.Error("problem-1", "err", err)
 		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	if err := p.s.l1BuildingState.Database().TrieDB().Commit(root, false); err != nil {
-		p.log.Error("problem-2", "err", err)
 		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
@@ -320,7 +317,6 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 
 	_, err = p.l1Chain.InsertChain(types.Blocks{block})
 	if err != nil {
-		p.log.Error("problem-3", "err", err)
 		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
@@ -336,6 +332,7 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
+	p.log.Info("l1-geth made block", "block-num", block.Number().Uint64(), "block-time-stamp", block.Time())
 	return blockchain.NewBlockOrError{SerializedBlock: serialized}
 
 }
