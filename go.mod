@@ -155,4 +155,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace blast/blockchain => ../blockchain
+replace blast/blockchain => ../op-geth/blockchain

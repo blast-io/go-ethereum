@@ -210,6 +210,10 @@ func (p *pluginBlast) IncludeTxByHash(hexHash string) error {
 	return nil
 }
 
+func (p *pluginBlast) AuthEndpoint() (string, error) {
+	return p.node.HTTPAuthEndpoint(), nil
+}
+
 func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 	from, err := p.l1Signer.Sender(tx)
 	if err != nil {
@@ -261,7 +265,7 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 }
 
 func (p *pluginBlast) Close() error {
-	p.log.Info("blast plugin about to call close on node")
+	p.log.Info("geth-l1 plugin about to call close on node")
 	// silly workaround because gob encoding, just leave as is whatever
 	if err := plugin.NewBasicError(p.node.Close()); err != nil {
 		return err
@@ -297,12 +301,12 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 	)
 	if err != nil {
 		p.log.Error("problem-1", "err", err)
-		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
+		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	if err := p.s.l1BuildingState.Database().TrieDB().Commit(root, false); err != nil {
 		p.log.Error("problem-2", "err", err)
-		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
+		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	// now that the blob txs are in a canonical block, flush them to the blob store
@@ -317,7 +321,7 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 	_, err = p.l1Chain.InsertChain(types.Blocks{block})
 	if err != nil {
 		p.log.Error("problem-3", "err", err)
-		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
+		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	p.s = nil
@@ -329,7 +333,7 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 	}{Hdr: block.Header(), Txs: block.Transactions()})
 
 	if err != nil {
-		return blockchain.NewBlockOrError{Err: *plugin.NewBasicError(err)}
+		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	return blockchain.NewBlockOrError{SerializedBlock: serialized}
@@ -347,11 +351,11 @@ var (
 	ErrNotCancunCantDoBlob = errors.New("not cancun yet so cant do blob")
 )
 
-func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) ([]byte, error) {
+func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) blockchain.NewChainOrError {
 	var gen *core.Genesis
 
 	p.log.Info(
-		"making new chain in geth as plugin",
+		"making new chain in l1-geth as plugin",
 		"using-custom-genesis", len(startingArgs.SerializedGenesis) > 0,
 	)
 
@@ -360,7 +364,9 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) ([
 		gen = core.DefaultGenesisBlock()
 	} else if len(startingArgs.SerializedGenesis) > 0 {
 		if err := json.Unmarshal(startingArgs.SerializedGenesis, &gen); err != nil {
-			return nil, plugin.NewBasicError(fmt.Errorf("problem deserializing genesis %w", err))
+			return blockchain.NewChainOrError{
+				Err: plugin.NewBasicError(fmt.Errorf("problem deserializing genesis %w", err)),
+			}
 		}
 
 		// l1Blk := gen.ToBlock()
@@ -381,15 +387,16 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) ([
 		gen = core.DeveloperGenesisBlock(30_000_000, nil)
 		gen.Config.CancunTime = startingArgs.WhenActivateCancun
 		gen.Config.PragueTime = startingArgs.WhenActivatePrague
-		for _addr, amt := range startingArgs.ExtraAllocs {
-			addr := common.HexToAddress(_addr)
-			if addr == (common.Address{}) {
-				return nil, plugin.NewBasicError(ErrEmptyAddr)
-			}
-			gen.Alloc[addr] = types.Account{
-				Balance: amt,
-			}
-		}
+
+		// for _addr, amt := range startingArgs.ExtraAllocs {
+		// 	addr := common.HexToAddress(_addr)
+		// 	if addr == (common.Address{}) {
+		// 		return nil, plugin.NewBasicError(ErrEmptyAddr)
+		// 	}
+		// 	gen.Alloc[addr] = types.Account{
+		// 		Balance: amt,
+		// 	}
+		// }
 
 	}
 
@@ -413,12 +420,12 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) ([
 
 	n, err := node.New(nodeCfg)
 	if err != nil {
-		return nil, plugin.NewBasicError(err)
+		return blockchain.NewChainOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	backend, err := eth.New(n, ethCfg)
 	if err != nil {
-		return nil, plugin.NewBasicError(err)
+		return blockchain.NewChainOrError{Err: plugin.NewBasicError(err)}
 	}
 
 	n.RegisterAPIs(tracers.APIs(backend.APIBackend))
@@ -439,12 +446,13 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) ([
 	p.l1Signer = types.LatestSigner(gen.Config)
 	err = n.Start()
 	if err != nil {
-		return nil, plugin.NewBasicError(err)
+		return blockchain.NewChainOrError{Err: plugin.NewBasicError(err)}
 	}
-
-	return json.Marshal(struct {
-		Hdr *types.Header
-	}{Hdr: gen.ToBlock().Header()})
+	payload, err := json.Marshal(gen.ToBlock().Header())
+	if err != nil {
+		return blockchain.NewChainOrError{Err: plugin.NewBasicError(err)}
+	}
+	return blockchain.NewChainOrError{SerializedHeader: payload}
 }
 
 func (p *pluginBlast) SetFeeRecipient(addr string) error {
