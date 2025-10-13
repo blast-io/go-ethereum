@@ -384,6 +384,7 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 		gen = core.DeveloperGenesisBlock(30_000_000, nil)
 		gen.Config.CancunTime = startingArgs.WhenActivateCancun
 		gen.Config.PragueTime = startingArgs.WhenActivatePrague
+		gen.Config.OsakaTime = startingArgs.WhenActivateOsaka
 
 		// for _addr, amt := range startingArgs.ExtraAllocs {
 		// 	addr := common.HexToAddress(_addr)
