@@ -372,6 +372,8 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 		//		fmt.Fprintln(os.Stderr, "in plugin", string(pr))
 		// os.WriteFile("TEMP_GEN_TEST.json", pr, 0644)
 		blockZeroHash := gen.ToBlock().Hash()
+		// NOTE when providing
+		// gen.Config.BlobScheduleConfig = params.DefaultBlobSchedule
 
 		p.log.Info(
 			"custom genesis provided blob schedule",
