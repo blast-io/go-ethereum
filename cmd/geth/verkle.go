@@ -76,10 +76,10 @@ func checkChildren(root verkle.VerkleNode, resolver verkle.NodeResolverFn) error
 		for i, child := range node.Children() {
 			childC := child.Commit().Bytes()
 
-			childS, err := resolver(childC[:])
 			if bytes.Equal(childC[:], zero[:]) {
 				continue
 			}
+			childS, err := resolver(childC[:])
 			if err != nil {
 				return fmt.Errorf("could not find child %x in db: %w", childC, err)
 			}
@@ -201,7 +201,7 @@ func expandVerkle(ctx *cli.Context) error {
 	}
 
 	for i, key := range keylist {
-		log.Info("Reading key", "index", i, "key", keylist[0])
+		log.Info("Reading key", "index", i, "key", key)
 		root.Get(key, chaindb.Get)
 	}
 

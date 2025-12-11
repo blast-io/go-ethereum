@@ -191,17 +191,18 @@ func (s *hookedStateDB) SetNonce(address common.Address, nonce uint64, reason tr
 
 func (s *hookedStateDB) SetCode(address common.Address, code []byte, reason tracing.CodeChangeReason) []byte {
 	prev := s.inner.SetCode(address, code, reason)
+
 	if s.hooks.OnCodeChangeV2 != nil || s.hooks.OnCodeChange != nil {
-		prevHash := types.EmptyCodeHash
-		if len(prev) != 0 {
-			prevHash = crypto.Keccak256Hash(prev)
-		}
+		prevHash := crypto.Keccak256Hash(prev)
 		codeHash := crypto.Keccak256Hash(code)
 
-		if s.hooks.OnCodeChangeV2 != nil {
-			s.hooks.OnCodeChangeV2(address, prevHash, prev, codeHash, code, reason)
-		} else if s.hooks.OnCodeChange != nil {
-			s.hooks.OnCodeChange(address, prevHash, prev, codeHash, code)
+		// Invoke the hooks only if the contract code is changed
+		if prevHash != codeHash {
+			if s.hooks.OnCodeChangeV2 != nil {
+				s.hooks.OnCodeChangeV2(address, prevHash, prev, codeHash, code, reason)
+			} else if s.hooks.OnCodeChange != nil {
+				s.hooks.OnCodeChange(address, prevHash, prev, codeHash, code)
+			}
 		}
 	}
 	return prev
@@ -219,7 +220,7 @@ func (s *hookedStateDB) SelfDestruct(address common.Address) uint256.Int {
 	var prevCode []byte
 	var prevCodeHash common.Hash
 
-	if s.hooks.OnCodeChange != nil {
+	if s.hooks.OnCodeChange != nil || s.hooks.OnCodeChangeV2 != nil {
 		prevCode = s.inner.GetCode(address)
 		prevCodeHash = s.inner.GetCodeHash(address)
 	}
@@ -245,7 +246,7 @@ func (s *hookedStateDB) SelfDestruct6780(address common.Address) (uint256.Int, b
 	var prevCode []byte
 	var prevCodeHash common.Hash
 
-	if s.hooks.OnCodeChange != nil {
+	if s.hooks.OnCodeChange != nil || s.hooks.OnCodeChangeV2 != nil {
 		prevCodeHash = s.inner.GetCodeHash(address)
 		prevCode = s.inner.GetCode(address)
 	}
