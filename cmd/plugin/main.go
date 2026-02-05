@@ -401,13 +401,19 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 		gen.Config.BPO1Time = startingArgs.WhenActivateBPO1
 		gen.Config.BPO2Time = startingArgs.WhenActivateBPO2
 
-		for _addr, amt := range startingArgs.ExtraAllocs {
+		for _addr, payload := range startingArgs.ExtraAllocs {
 			addr := common.HexToAddress(_addr)
 			if addr == (common.Address{}) {
 				return blockchain.NewChainOrError{Err: plugin.NewBasicError(ErrEmptyAddr)}
 			}
+			s := map[common.Hash]common.Hash{}
+			for k, v := range payload.Storage {
+				s[common.HexToHash(k)] = common.HexToHash(v)
+			}
 			gen.Alloc[addr] = types.Account{
-				Balance: amt,
+				Code:    payload.Code,
+				Balance: payload.Balance,
+				Storage: s,
 			}
 		}
 	}
