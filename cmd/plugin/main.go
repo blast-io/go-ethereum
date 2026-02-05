@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
@@ -384,22 +385,31 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 
 	} else {
 		gen = core.DeveloperGenesisBlock(30_000_000, nil)
+		blobSchedule := &params.BlobScheduleConfig{
+			Cancun: params.DefaultCancunBlobConfig,
+			Prague: params.DefaultPragueBlobConfig,
+			Osaka:  params.DefaultOsakaBlobConfig,
+			BPO1:   params.DefaultBPO1BlobConfig,
+			BPO2:   params.DefaultBPO2BlobConfig,
+			BPO3:   params.DefaultBPO3BlobConfig,
+		}
+
+		gen.Config.BlobScheduleConfig = blobSchedule
 		gen.Config.CancunTime = startingArgs.WhenActivateCancun
 		gen.Config.PragueTime = startingArgs.WhenActivatePrague
 		gen.Config.OsakaTime = startingArgs.WhenActivateOsaka
 		gen.Config.BPO1Time = startingArgs.WhenActivateBPO1
 		gen.Config.BPO2Time = startingArgs.WhenActivateBPO2
 
-		// for _addr, amt := range startingArgs.ExtraAllocs {
-		// 	addr := common.HexToAddress(_addr)
-		// 	if addr == (common.Address{}) {
-		// 		return nil, plugin.NewBasicError(ErrEmptyAddr)
-		// 	}
-		// 	gen.Alloc[addr] = types.Account{
-		// 		Balance: amt,
-		// 	}
-		// }
-
+		for _addr, amt := range startingArgs.ExtraAllocs {
+			addr := common.HexToAddress(_addr)
+			if addr == (common.Address{}) {
+				return blockchain.NewChainOrError{Err: plugin.NewBasicError(ErrEmptyAddr)}
+			}
+			gen.Alloc[addr] = types.Account{
+				Balance: amt,
+			}
+		}
 	}
 
 	ethCfg := &ethconfig.Config{
