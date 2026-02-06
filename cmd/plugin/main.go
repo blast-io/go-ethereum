@@ -183,6 +183,35 @@ var (
 	_ blockchain.Chain = (*pluginBlast)(nil)
 )
 
+// validateBlobSidecarLegacy implements pre-Osaka sidecar validation.
+// Copied and adapted from op-geth core/txpool/validation.go
+func validateBlobSidecarLegacy(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
+	if sidecar.Version != types.BlobSidecarVersion0 {
+		return fmt.Errorf("invalid sidecar version pre-osaka: %v", sidecar.Version)
+	}
+	if len(sidecar.Proofs) != len(hashes) {
+		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes))
+	}
+	for i := range sidecar.Blobs {
+		if err := kzg4844.VerifyBlobProof(&sidecar.Blobs[i], sidecar.Commitments[i], sidecar.Proofs[i]); err != nil {
+			return fmt.Errorf("invalid blob %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// validateBlobSidecarOsaka implements Osaka sidecar validation.
+// Copied and adapted from op-geth core/txpool/validation.go
+func validateBlobSidecarOsaka(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
+	if sidecar.Version != types.BlobSidecarVersion1 {
+		return fmt.Errorf("invalid sidecar version post-osaka: %v", sidecar.Version)
+	}
+	if len(sidecar.Proofs) != len(hashes)*kzg4844.CellProofsPerBlob {
+		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes)*kzg4844.CellProofsPerBlob)
+	}
+	return kzg4844.VerifyCellProofs(sidecar.Blobs, sidecar.Commitments, sidecar.Proofs)
+}
+
 // NOTE NOTE NOTE all errors returned MUST be wrapped with plugin.NewBasicError!
 
 func (p *pluginBlast) InitExtraConfigs(cfg []byte) error {
@@ -252,13 +281,35 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 	p.s.L1Transactions = append(p.s.L1Transactions, tx.WithoutBlobTxSidecar())
 
 	if tx.Type() == types.BlobTxType {
+
 		if !p.l1Cfg.Config.IsCancun(p.s.l1BuildingHeader.Number, p.s.l1BuildingHeader.Time) {
 			return plugin.NewBasicError(ErrNotCancunCantDoBlob)
 		}
+
 		sidecar := tx.BlobTxSidecar()
-		if sidecar != nil {
-			p.s.l1BuildingBlobSidecars = append(p.s.l1BuildingBlobSidecars, sidecar)
+		if sidecar == nil {
+			return plugin.NewBasicError(errors.New("missing sidecar in blob transaction"))
 		}
+
+		hashes := tx.BlobHashes()
+		if len(hashes) == 0 {
+			return plugin.NewBasicError(errors.New("blobless blob transaction"))
+		}
+
+		if err := sidecar.ValidateBlobCommitmentHashes(hashes); err != nil {
+			return plugin.NewBasicError(fmt.Errorf("cant validate blob :%w", err))
+		}
+
+		if p.l1Cfg.Config.IsOsaka(p.s.l1BuildingHeader.Number, p.s.l1BuildingHeader.Time) {
+			// if err := validateBlobSidecarOsaka(sidecar, hashes); err != nil {
+			// 	return plugin.NewBasicError(fmt.Errorf("cant validate blob osaka :%w", err))
+			// }
+		} else {
+			if err := validateBlobSidecarLegacy(sidecar, hashes); err != nil {
+				return plugin.NewBasicError(fmt.Errorf("cant validate blob legacy :%w", err))
+			}
+		}
+		p.s.l1BuildingBlobSidecars = append(p.s.l1BuildingBlobSidecars, sidecar)
 		*p.s.l1BuildingHeader.BlobGasUsed += receipt.BlobGasUsed
 	}
 
@@ -516,33 +567,27 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	}
 
 	if p.l1Cfg.Config.IsCancun(header.Number, header.Time) {
-
-		var excessBlobGas uint64
-		if p.l1Cfg.Config.IsCancun(parent.Number, parent.Time) {
-			excessBlobGas = eip4844.CalcExcessBlobGas(p.l1Cfg.Config, parent, header.Time)
-		}
-
 		header.BlobGasUsed = new(uint64)
+		excessBlobGas := eip4844.CalcExcessBlobGas(p.l1Cfg.Config, parent, header.Time)
 		header.ExcessBlobGas = &excessBlobGas
 		root := crypto.Keccak256Hash([]byte("fake-beacon-block-root"), header.Number.Bytes())
 		header.ParentBeaconRoot = &root
-
 		context := core.NewEVMBlockContext(header, p.l1Chain, nil)
 		vmenv := vm.NewEVM(context, statedb, p.l1Chain.Config(), vm.Config{})
-
-		if header.ParentBeaconRoot != nil {
-			core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv)
+		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv)
+		if p.l1Chain.Config().IsPrague(header.Number, header.Time) {
+			core.ProcessParentBlockHash(header.ParentHash, vmenv)
 		}
 	}
 
 	p.s = &workState{
-		l1BuildingHeader: header,
-		l1BuildingState:  statedb,
-		l1Receipts:       make([]*types.Receipt, 0),
-		L1Transactions:   make([]*types.Transaction, 0),
-		pendingIndices:   make(map[common.Address]uint64),
-		//		l1BuildingBlobSidecars: make([]*types.BlobTxSidecar, 0),
-		L1GasPool: new(core.GasPool).AddGas(header.GasLimit),
+		l1BuildingHeader:       header,
+		l1BuildingState:        statedb,
+		l1Receipts:             make([]*types.Receipt, 0),
+		L1Transactions:         make([]*types.Transaction, 0),
+		pendingIndices:         make(map[common.Address]uint64),
+		l1BuildingBlobSidecars: make([]*types.BlobTxSidecar, 0),
+		L1GasPool:              new(core.GasPool).AddGas(header.GasLimit),
 	}
 
 	p.log.Debug("work state ready")
@@ -566,7 +611,8 @@ func main() {
 	})
 
 	chain := &pluginBlast{
-		log: logger,
+		log:       logger,
+		blobStore: NewBlobStore(),
 	}
 
 	pluginMap := map[string]plugin.Plugin{
