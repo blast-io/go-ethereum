@@ -24,6 +24,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hashicorp/go-hclog"
+)
+
+var (
+	TempLogger hclog.Logger
 )
 
 var (
@@ -65,20 +70,44 @@ func latestBlobConfig(cfg *params.ChainConfig, time uint64) *BlobConfig {
 	switch {
 	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
 		bc = s.BPO5
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using bpo5 blob schedule", "time", time)
+		}
 	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
 		bc = s.BPO4
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using bpo4 blob schedule", "time", time)
+		}
 	case cfg.IsBPO3(london, time) && s.BPO3 != nil:
 		bc = s.BPO3
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using bpo3 blob schedule", "time", time)
+		}
 	case cfg.IsBPO2(london, time) && s.BPO2 != nil:
 		bc = s.BPO2
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using bpo2 blob schedule", "time", time)
+		}
 	case cfg.IsBPO1(london, time) && s.BPO1 != nil:
 		bc = s.BPO1
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using bpo1 blob schedule", "time", time)
+		}
 	case cfg.IsOsaka(london, time) && s.Osaka != nil:
 		bc = s.Osaka
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using osaka blob schedule", "time", time, "max", bc.Max)
+		}
 	case cfg.IsPrague(london, time) && s.Prague != nil:
 		bc = s.Prague
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using prague blob schedule", "time", time, "max", bc.Max)
+		}
 	case cfg.IsCancun(london, time) && s.Cancun != nil:
 		bc = s.Cancun
+		if time < math.MaxUint64 {
+			// TempLogger.Info("using cancun blob schedule", "time", time, "max", bc.Max)
+		}
 	default:
 		return nil
 	}
@@ -146,6 +175,7 @@ func calcExcessBlobGas(isOsaka bool, bcfg *BlobConfig, parent *types.Header) uin
 		targetGas     = uint64(bcfg.Target) * params.BlobTxBlobGasPerBlob
 	)
 	if excessBlobGas < targetGas {
+		TempLogger.Info("say blobbing excess", "excessBlobGas", excessBlobGas, "target", targetGas)
 		return 0
 	}
 
@@ -157,6 +187,7 @@ func calcExcessBlobGas(isOsaka bool, bcfg *BlobConfig, parent *types.Header) uin
 			reservePrice = baseCost.Mul(baseCost, parent.BaseFee)
 			blobPrice    = bcfg.blobPrice(parentExcessBlobGas)
 		)
+		TempLogger.Info("hitting is osaka", "reserve-price", reservePrice, "blob-price", blobPrice)
 		if reservePrice.Cmp(blobPrice) > 0 {
 			scaledExcess := parentBlobGasUsed * uint64(bcfg.Max-bcfg.Target) / uint64(bcfg.Max)
 			return parentExcessBlobGas + scaledExcess
@@ -173,6 +204,8 @@ func CalcBlobFee(config *params.ChainConfig, header *types.Header) *big.Int {
 	if blobConfig == nil {
 		panic("calculating blob fee on unsupported fork")
 	}
+	TempLogger.Info("cal blob config used", "b", blobConfig)
+
 	return blobConfig.blobBaseFee(*header.ExcessBlobGas)
 }
 

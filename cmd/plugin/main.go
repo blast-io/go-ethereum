@@ -150,14 +150,11 @@ func (store *BlobsStore) GetBlobs(
 // }
 
 type pluginBlast struct {
-	log hclog.Logger
-
+	log          hclog.Logger
 	node         *node.Node
 	Eth          *eth.Ethereum
 	prefCoinbase common.Address
-
-	blobStore *BlobsStore
-
+	blobStore    *BlobsStore
 	// L1 evm / chain
 	l1Chain    *core.BlockChain
 	l1Database ethdb.Database
@@ -270,11 +267,13 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 		newEVM, p.s.L1GasPool, p.s.l1BuildingState, p.s.l1BuildingHeader, tx, &p.s.l1BuildingHeader.GasUsed,
 	)
 
-	p.log.Info("applied tx", "hsh", tx.Hash().Hex(), "took", time.Since(st))
+	p.log.Info("applied tx", "hsh", tx.Hash().Hex(), "took", time.Since(st), "tx-type", tx.Type())
 
 	if err != nil {
 		p.s.l1TxFailed = append(p.s.l1TxFailed, tx)
-		return plugin.NewBasicError(fmt.Errorf("failed to apply transaction to L1 block (tx %d): %v", len(p.s.L1Transactions), err))
+		return plugin.NewBasicError(
+			fmt.Errorf("failed to apply transaction to L1 block (tx %d): %v", len(p.s.L1Transactions), err),
+		)
 	}
 
 	p.s.l1Receipts = append(p.s.l1Receipts, receipt)
@@ -311,6 +310,10 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 		}
 		p.s.l1BuildingBlobSidecars = append(p.s.l1BuildingBlobSidecars, sidecar)
 		*p.s.l1BuildingHeader.BlobGasUsed += receipt.BlobGasUsed
+		p.log.Info("total blob gas used to far",
+			"current-added", receipt.BlobGasUsed,
+			"blob-gas-used", *p.s.l1BuildingHeader.BlobGasUsed,
+		)
 	}
 
 	return nil
@@ -339,8 +342,10 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		p.s.l1BuildingHeader.RequestsHash = &types.EmptyRequestsHash
 	}
 
+	cpied := types.CopyHeader(p.s.l1BuildingHeader)
+
 	block := types.NewBlock(
-		p.s.l1BuildingHeader, &types.Body{
+		cpied, &types.Body{
 			Transactions: p.s.L1Transactions,
 			Withdrawals:  withdrawals}, p.s.l1Receipts, trie.NewStackTrie(nil),
 	)
@@ -367,10 +372,20 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		}
 	}
 
+	// if _, err := p.l1Chain.InsertHeaderChain([]*types.Header{cpied}); err != nil {
+	// 	return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
+	// }
+
 	_, err = p.l1Chain.InsertChain(types.Blocks{block})
 	if err != nil {
 		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
+
+	p.l1Chain.SetFinalized(block.Header())
+	p.l1Chain.SetSafe(block.Header())
+	p.l1Chain.HeaderChain().SetCurrentHeader(block.Header())
+
+	//	checkCurrent := p.Eth.APIBackend.CurrentHeader()
 
 	p.s = nil
 
@@ -384,7 +399,14 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		return blockchain.NewBlockOrError{Err: plugin.NewBasicError(err)}
 	}
 
-	p.log.Info("l1-geth made block", "block-num", block.Number().Uint64(), "block-time-stamp", block.Time())
+	p.log.Info("l1-geth made block",
+		"tx-count", len(block.Transactions()),
+		"block-num", block.Number().Uint64(),
+		"block-time-stamp", block.Time(),
+		"blobs-count", len(p.blobStore.blobs[block.Time()]),
+		"excess-header", *block.Header().ExcessBlobGas,
+		"blob-base-fee", eip4844.CalcBlobFee(p.l1Cfg.Config, block.Header()),
+	)
 	return blockchain.NewBlockOrError{SerializedBlock: serialized}
 
 }
@@ -521,7 +543,15 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 	if err != nil {
 		return blockchain.NewChainOrError{Err: plugin.NewBasicError(err)}
 	}
-	return blockchain.NewChainOrError{SerializedHeader: payload}
+	payloadChainParam, err := json.Marshal(backend.APIBackend.ChainConfig())
+	if err != nil {
+		return blockchain.NewChainOrError{Err: plugin.NewBasicError(err)}
+	}
+
+	return blockchain.NewChainOrError{
+		SerializedHeader:     payload,
+		SerializedChainParam: payloadChainParam,
+	}
 }
 
 func (p *pluginBlast) SetFeeRecipient(addr string) error {
@@ -536,6 +566,16 @@ func (p *pluginBlast) SetFeeRecipient(addr string) error {
 func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	p.log.Debug("plugin started new block")
 	parent := p.l1Chain.CurrentHeader()
+
+	if parent.BlobGasUsed != nil && parent.ExcessBlobGas != nil {
+		p.log.Info("starting new block",
+			"parent-number", parent.Number,
+			"parent-blob-gas-used", *parent.BlobGasUsed,
+			"parent-excess-gas", *parent.ExcessBlobGas,
+			"parent-time", parent.Time,
+		)
+	}
+
 	parentHash := parent.Hash()
 	statedb, err := state.New(parent.Root, state.NewDatabase(triedb.NewDatabase(p.l1Database, nil), nil))
 	if err != nil {
@@ -569,6 +609,7 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	if p.l1Cfg.Config.IsCancun(header.Number, header.Time) {
 		header.BlobGasUsed = new(uint64)
 		excessBlobGas := eip4844.CalcExcessBlobGas(p.l1Cfg.Config, parent, header.Time)
+		p.log.Info("excess blob gas check", "amt", excessBlobGas)
 		header.ExcessBlobGas = &excessBlobGas
 		root := crypto.Keccak256Hash([]byte("fake-beacon-block-root"), header.Number.Bytes())
 		header.ParentBeaconRoot = &root
@@ -609,6 +650,10 @@ func main() {
 		Color:           hclog.AutoColor,
 		IncludeLocation: true,
 	})
+
+	eip4844.TempLogger = logger
+	eth.TempLogger = logger
+	//l.SetDefault(&wrappedL{logger})
 
 	chain := &pluginBlast{
 		log:       logger,

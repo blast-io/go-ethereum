@@ -62,6 +62,11 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	gethversion "github.com/ethereum/go-ethereum/version"
+	"github.com/hashicorp/go-hclog"
+)
+
+var (
+	TempLogger hclog.Logger
 )
 
 const (
@@ -273,6 +278,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		overrides.OverrideVerkle = config.OverrideVerkle
 	}
 	options.Overrides = &overrides
+
+	TempLogger.Info("what blob schedule used actually", "blob-config", config.Genesis.Config.BlobScheduleConfig)
 
 	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, eth.engine, options)
 	if err != nil {
