@@ -225,7 +225,7 @@ func (p *pluginBlast) IncludeTxByHash(hexHash string) error {
 	if tx == nil {
 		return plugin.NewBasicError(fmt.Errorf("cannot find tx %s", hsh))
 	}
-	p.log.Info("had tx requested - now will process tx")
+	p.log.Debug("had tx requested - now will process tx")
 	if err := p.includeTx(tx); err != nil {
 		return plugin.NewBasicError(err)
 	}
@@ -246,7 +246,7 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 	if err != nil {
 		return plugin.NewBasicError(err)
 	}
-	p.log.Info("including tx", "nonce", tx.Nonce(), "from", from, "to", tx.To())
+	p.log.Debug("including tx", "nonce", tx.Nonce(), "from", from, "to", tx.To())
 	if tx.Gas() > p.s.l1BuildingHeader.GasLimit {
 		return plugin.NewBasicError(
 			fmt.Errorf("tx consumes %d gas, more than available in L1 block %d", tx.Gas(), p.s.l1BuildingHeader.GasLimit),
@@ -258,7 +258,7 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 	}
 
 	p.s.l1BuildingState.SetTxContext(tx.Hash(), len(p.s.L1Transactions))
-	p.log.Info("about to apply tx", "hsh", tx.Hash())
+	p.log.Debug("about to apply tx", "hsh", tx.Hash())
 	st := time.Now()
 
 	blkCtx := core.NewEVMBlockContext(p.s.l1BuildingHeader, p.l1Chain, &p.s.l1BuildingHeader.Coinbase)
@@ -267,7 +267,7 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 		newEVM, p.s.L1GasPool, p.s.l1BuildingState, p.s.l1BuildingHeader, tx, &p.s.l1BuildingHeader.GasUsed,
 	)
 
-	p.log.Info("applied tx", "hsh", tx.Hash().Hex(), "took", time.Since(st), "tx-type", tx.Type())
+	p.log.Debug("applied tx", "hsh", tx.Hash().Hex(), "took", time.Since(st), "tx-type", tx.Type())
 
 	if err != nil {
 		p.s.l1TxFailed = append(p.s.l1TxFailed, tx)
@@ -310,7 +310,7 @@ func (p *pluginBlast) includeTx(tx *types.Transaction) error {
 		}
 		p.s.l1BuildingBlobSidecars = append(p.s.l1BuildingBlobSidecars, sidecar)
 		*p.s.l1BuildingHeader.BlobGasUsed += receipt.BlobGasUsed
-		p.log.Info("total blob gas used to far",
+		p.log.Debug("total blob gas used to far",
 			"current-added", receipt.BlobGasUsed,
 			"blob-gas-used", *p.s.l1BuildingHeader.BlobGasUsed,
 		)
