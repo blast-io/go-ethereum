@@ -342,10 +342,8 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		p.s.l1BuildingHeader.RequestsHash = &types.EmptyRequestsHash
 	}
 
-	cpied := types.CopyHeader(p.s.l1BuildingHeader)
-
 	block := types.NewBlock(
-		cpied, &types.Body{
+		p.s.l1BuildingHeader, &types.Body{
 			Transactions: p.s.L1Transactions,
 			Withdrawals:  withdrawals}, p.s.l1Receipts, trie.NewStackTrie(nil),
 	)
@@ -387,8 +385,6 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 
 	//	checkCurrent := p.Eth.APIBackend.CurrentHeader()
 
-	p.s = nil
-
 	serialized, err := json.Marshal(struct {
 		Hdr      *types.Header
 		Txs      types.Transactions
@@ -405,10 +401,11 @@ func (p *pluginBlast) EndBlock() blockchain.NewBlockOrError {
 		"block-time-stamp", block.Time(),
 		"blobs-count", len(p.blobStore.blobs[block.Time()]),
 		"excess-header", *block.Header().ExcessBlobGas,
-		"blob-base-fee", eip4844.CalcBlobFee(p.l1Cfg.Config, block.Header()),
+		"blob-base-fee", eip4844.CalcBlobFee(p.l1Cfg.Config, p.s.l1BuildingHeader),
 	)
-	return blockchain.NewBlockOrError{SerializedBlock: serialized}
+	p.s = nil
 
+	return blockchain.NewBlockOrError{SerializedBlock: serialized}
 }
 
 // TODO error if its not started yet?
@@ -468,7 +465,7 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 		}
 
 		gen.Config.BlobScheduleConfig = blobSchedule
-		gen.Config.CancunTime = startingArgs.WhenActivateCancun
+		//		gen.Config.CancunTime = startingArgs.WhenActivateCancun
 		gen.Config.PragueTime = startingArgs.WhenActivatePrague
 		gen.Config.OsakaTime = startingArgs.WhenActivateOsaka
 		gen.Config.BPO1Time = startingArgs.WhenActivateBPO1
@@ -534,6 +531,8 @@ func (p *pluginBlast) NewChain(startingArgs *blockchain.NewChainStartingArgs) bl
 	p.l1Chain = backend.BlockChain()
 	p.l1Database = backend.ChainDb()
 	p.l1Cfg = gen
+	p.l1Cfg.Config = gen.Config
+
 	p.l1Signer = types.LatestSigner(gen.Config)
 	err = n.Start()
 	if err != nil {
@@ -567,7 +566,7 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	p.log.Debug("plugin started new block")
 	parent := p.l1Chain.CurrentHeader()
 
-	if parent.BlobGasUsed != nil && parent.ExcessBlobGas != nil {
+	if parent.BlobGasUsed != nil {
 		p.log.Info("starting new block",
 			"parent-number", parent.Number,
 			"parent-blob-gas-used", *parent.BlobGasUsed,

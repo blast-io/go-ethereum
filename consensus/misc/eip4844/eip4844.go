@@ -204,9 +204,15 @@ func CalcBlobFee(config *params.ChainConfig, header *types.Header) *big.Int {
 	if blobConfig == nil {
 		panic("calculating blob fee on unsupported fork")
 	}
-	TempLogger.Info("cal blob config used", "b", blobConfig)
 
-	return blobConfig.blobBaseFee(*header.ExcessBlobGas)
+	computed := blobConfig.blobBaseFee(*header.ExcessBlobGas)
+	// TempLogger.Info("cal blob config used",
+	// 	"b", blobConfig,
+	// 	"computed", computed,
+	// 	"header-excess", *header.ExcessBlobGas,
+	// )
+
+	return computed
 }
 
 // MaxBlobsPerBlock returns the max blobs per block for a block at the given timestamp.
