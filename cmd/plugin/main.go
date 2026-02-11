@@ -567,7 +567,7 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	parent := p.l1Chain.CurrentHeader()
 
 	if parent.BlobGasUsed != nil {
-		p.log.Info("starting new block",
+		p.log.Debug("starting new block",
 			"parent-number", parent.Number,
 			"parent-blob-gas-used", *parent.BlobGasUsed,
 			"parent-excess-gas", *parent.ExcessBlobGas,
@@ -608,7 +608,7 @@ func (p *pluginBlast) StartBlock(timeDelta uint64) error {
 	if p.l1Cfg.Config.IsCancun(header.Number, header.Time) {
 		header.BlobGasUsed = new(uint64)
 		excessBlobGas := eip4844.CalcExcessBlobGas(p.l1Cfg.Config, parent, header.Time)
-		p.log.Info("excess blob gas check", "amt", excessBlobGas)
+		p.log.Debug("excess blob gas check", "amt", excessBlobGas)
 		header.ExcessBlobGas = &excessBlobGas
 		root := crypto.Keccak256Hash([]byte("fake-beacon-block-root"), header.Number.Bytes())
 		header.ParentBeaconRoot = &root
